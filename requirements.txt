@@ -1,0 +1,3 @@
+pye57>=0.4.19
+numpy
+Pillow
