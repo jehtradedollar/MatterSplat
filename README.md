@@ -32,6 +32,7 @@ This command:
 
 Options:
 
+- `--cap-max N`, `--resolution-divisor N` and `--iterations N` override the tuned splat budget (1M), image size (2 = 2048 px) and length (30k steps). `--dataset <dir>` reuses an existing import. Maximum quality on a 12 GB card is `--cap-max 3000000 --resolution-divisor 1 --iterations 60000`: about 2 hours on the RTX 4070 SUPER, 9.3 GB peak for the whole GPU, a 744 MB PLY and a 96 MB `.splat`. It is visibly sharper than the default, with legible print and crisper floors and far walls. On 6 training views, LPIPS was 0.268 against 0.354.
 - `--colmap` also writes the step 2 COLMAP model.
 - `--holdout-sweeps` holds whole sweeps out of training and scores them.
 
