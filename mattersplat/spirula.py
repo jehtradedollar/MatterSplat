@@ -119,6 +119,7 @@ def run(cmd: list[str], log_path: str, echo=print) -> int:
         last = 0.0
         for line in proc.stdout:
             log.write(line)
+            log.flush()  # so the log shows live progress during multi-hour runs
             # progress lines repeat every few hundred ms; echo at most every 30 s
             if not line.startswith("step") or time.time() - last > 30:
                 echo(line.rstrip())

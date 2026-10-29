@@ -38,6 +38,29 @@ Options:
 
 `python -m mattersplat run ...` works the same way.
 
+### Cleaning pass
+
+```
+.venv\Scripts\mattersplat clean out\cloud_0\splat.ply --e57 path\to\cloud_0.e57
+```
+
+Writes `splat_clean.ply`, `splat_clean.splat` and `splat_clean.json` (counts per filter) next to the input. The original is never changed. Filters:
+
+- **faint:** opacity below 0.02.
+- **box:** outside the sweep box.
+- **big:** above 0.5 m and in the top 0.1% of sizes.
+- **unscanned:** centre more than 15 cm (plus up to 0.3 m of its own size) from every laser-scan point. This is the main floater filter. The scan cloud is thinned to 3 cm and cached as `scan_support_0.03.npz`.
+- **isolated:** k-NN statistical outlier.
+
+Results on the test file:
+
+| | removed | LPIPS at photo poses (before → after) |
+|---|---|---|
+| 3M splat | 4.9% | 0.268 → 0.271 |
+| 4M splat | 5.3% | 0.253 → 0.259 |
+
+At the photo poses the score barely moves, because the training views had been fitted using some of the removed floaters. Between sweeps and above eye height, where floaters show, the haze and streaks are visibly gone. `--max-dist 0.25` removes about half as much, at half the photo-pose cost.
+
 ### Web viewer
 
 ```

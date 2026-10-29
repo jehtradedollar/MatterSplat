@@ -28,6 +28,15 @@ VIEWER_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     data_dir = "."
+    default_query = ""  # a bare "/" redirects here, so a plain link opens the splat being served
+
+    def do_GET(self):
+        if self.path in ("/", "/index.html") and self.default_query:
+            self.send_response(302)
+            self.send_header("Location", "/" + self.default_query)
+            self.end_headers()
+            return
+        super().do_GET()
 
     def translate_path(self, path):
         path = path.split("?", 1)[0]
@@ -73,7 +82,7 @@ def serve(splat: str, port: int = 8770, use_ply: bool = False, browser: bool = T
             ply_to_splat(splat, compact)
         name = os.path.basename(compact)
     query = f"?file=data/{name}" + ("&sh=2" if name.endswith(".ply") else "")
-    handler = partial(type("H", (Handler,), {"data_dir": data_dir}), directory=VIEWER_DIR)
+    handler = partial(type("H", (Handler,), {"data_dir": data_dir, "default_query": query}), directory=VIEWER_DIR)
     httpd = http.server.ThreadingHTTPServer(("127.0.0.1", port), handler)
     url = f"http://127.0.0.1:{port}/{query}"
     print(f"Viewer: {url}  (Ctrl+C to stop)")
