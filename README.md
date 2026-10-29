@@ -41,7 +41,7 @@ Options:
 ### Cleaning pass
 
 ```
-.venv\Scripts\mattersplat clean out\cloud_0\splat.ply --e57 path	o\cloud_0.e57
+.venvScriptsmattersplat clean outoud_0splat.ply --e57 path	ooud_0.e57
 ```
 
 Writes `splat_clean.ply`, `splat_clean.splat` and `splat_clean.json` (counts per filter) next to the input. The original is never changed. Filters:
