@@ -6,8 +6,65 @@ Matterport E57 export -> images + point cloud in 3D -> Gaussian splat (trained w
 
 ```
 python -m venv .venv
-.venv\Scripts\python -m pip install -r requirements.txt
+.venv\Scripts\python -m pip install -e .            # adds the `mattersplat` command
+.venv\Scripts\python -m pip install torch lpips     # optional, only for LPIPS scores in tuning
 ```
+
+Training needs [Spirula Studio](https://github.com/harry7557558/spirula-studio), a Windows Vulkan build that needs no CUDA or Python. `spirula.exe` is found from:
+
+1. `--spirula`
+2. the `MATTERSPLAT_SPIRULA` environment variable
+3. the default install path in `mattersplat/spirula.py`
+
+## Quick start: E57 to splat in one command
+
+```
+.venv\Scripts\mattersplat run path\to\cloud_0.e57 --out out\cloud_0 --view
+```
+
+This command:
+
+1. Imports the E57 with Spirula, about 2 min for a 14 GB, 103-sweep file.
+2. Crops the stray long-range points out of the seed cloud.
+3. Trains with the tuned defaults: 2048 px, 1M splats, depth supervision off, 30k steps. This takes about 16 min on an RTX 4070 SUPER.
+4. Writes `splat.ply`, the compact `splat.splat` and `sweeps.json`.
+5. With `--view`, opens the viewer.
+
+Options:
+
+- `--colmap` also writes the step 2 COLMAP model.
+- `--holdout-sweeps` holds whole sweeps out of training and scores them.
+
+`python -m mattersplat run ...` works the same way.
+
+### Web viewer
+
+```
+.venv\Scripts\mattersplat view out\cloud_0\splat.ply [--ply] [--port 8770]
+```
+
+This serves `viewer/index.html` on localhost and opens the browser. It loads `splat.splat`, which is made on the fly if missing.
+
+The viewer:
+
+- **Library:** uses `@mkkellogg/gaussian-splats-3d` 0.4.7 and three 0.160.1 from jsDelivr, so it needs internet on first load.
+- **`.splat` file:** 32 MB for 1M splats against 248 MB for the PLY, with no view-dependent colour.
+- **`--ply`:** loads the full PLY instead, with spherical-harmonics degree 2.
+- **Frame:** Z-up, metres, in the E57 world frame. It starts at sweep 0, eye height, facing a horizontal cube face.
+- **Walk mode (default):** drag to look around.
+- **Orbit mode:** orbits a point 2.5 m ahead.
+- **Keys:** WASD/arrows move, Q/E go down/up, Shift is faster.
+- **Sweep list:** jumps to any scan position. Reset returns to sweep 0.
+- **Header:** shows FPS, load time and splat count.
+
+The page exposes `window.mattersplat`, with `jump(sweep, face)`, `stats()` and `screenshot(name)`. Screenshots go to `<splat dir>/screenshots/`.
+
+On the test splat (985k splats after the viewer drops near-transparent ones), Edge and Chrome on the RTX 4070 SUPER:
+
+- **Load:** about 1.3 s for `.splat` and 2.4 s for the full PLY.
+- **Frame rate:** 60 fps, the refresh cap, at every sweep tried.
+
+## The steps individually
 
 ## Step 1: read and inspect an E57
 

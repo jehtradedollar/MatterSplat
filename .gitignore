@@ -3,3 +3,4 @@ out/
 *.e57
 __pycache__/
 *.pyc
+*.egg-info/
