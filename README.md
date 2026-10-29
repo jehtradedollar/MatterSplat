@@ -49,16 +49,49 @@ Steps:
 3. `spirula train 3dgs` runs with `mattersplat.spirula.TRAIN_FLAGS`, tuned for a 12 GB RTX 4070 SUPER:
    - `--train-resolution-divisor 2`: train at 2048 px
    - `--cap-max 1000000`
-   - `--depth-supervision-weight 0.1`: the scan depth maps are loaded by default but only used with a weight above 0
-   - `--input-depth-is-ray-depth 0`: the maps hold planar z-depth
+   - `--depth-supervision-weight 0`: the scan depth maps are loaded but left out of the loss, because 0.1 and 0.5 scored worse (see Tuning)
+   - `--input-depth-is-ray-depth 0`: the maps hold planar z-depth, which matters only when depth supervision is on
    - viewer off
 4. The result is copied to `<out>/splat.ply`.
 
 Other outputs:
 
-- `--holdout 8` (the default) keeps every 8th face out of training. Its rendered and reference images go to `<out>/renders/`, and PSNR/SSIM go to `train_summary.json`. Use `--holdout 0` to train on every face.
+- By default every face trains, and `--dataset <dir>` reuses an existing import.
+- `--holdout-sweeps [N ...]` keeps all 6 faces of the given sweeps out of training. With no values it uses `DEFAULT_HOLDOUT_SWEEPS`: 6, 19, 32, 45, 58, 71, 84 and 97. `--holdout N` keeps every Nth face out instead. This is a weak test, because a cube face shares no pixels with its own sweep's other faces.
+- Held-out rendered and reference images go to `<out>/renders/`, and the scores go to `train_summary.json`.
 - `gpu_memory.csv` logs GPU memory use (nvidia-smi, whole GPU).
 - `spirula_train.log` holds the training log.
+
+### Tuning
+
+```
+.venv\Scripts\python -m mattersplat.tune out\cloud_0_spirula\dataset --out out\cloud_0_tuning [--runs baseline depth0 ...]
+```
+
+Each variant in `tune.VARIANTS` changes one flag. All variants train on the same import with the same held-out sweeps. The command writes `results.md`/`results.json` and `compare_<view>.jpg`: one reference and one render per run for four fixed held-out views.
+
+`mattersplat.score` adds two scores, computed at 512 px:
+
+- LPIPS (needs the optional `torch` + `lpips` packages)
+- Sobel gradient correlation
+
+PSNR/SSIM alone reward smooth blur on these bright, detailed interiors.
+
+Spirula shuffles its eval image order on every run, so views are matched by content (`spirula.match_eval_images`).
+
+Results on the test file (48 held-out faces from 8 sweeps, 30k steps, 1M splats):
+
+| run | LPIPS (lower is better) | grad corr | PSNR | SSIM | train min |
+|---|---|---|---|---|---|
+| depth weight 0.1 | 0.442 | 0.436 | 16.24 | 0.566 | 18.9 |
+| **depth weight 0** (default now) | **0.415** | **0.459** | **16.52** | 0.568 | 16.5 |
+| depth weight 0.5 | 0.494 | 0.387 | 15.81 | 0.558 | 18.5 |
+| distraction-robustness mild | 0.463 | 0.425 | 16.20 | 0.566 | 17.7 |
+| full resolution (divisor 1) | 0.455 | 0.433 | 16.15 | 0.649* | 53.8 |
+
+\* Full resolution's SSIM is scored against 4096 px references, so it isn't comparable with the other rows.
+
+Per view, depth 0 beats depth 0.1 on LPIPS in 41 of 48 views. Depth 0.5 loses in all 48.
 
 ### What a Matterport Pro3 export looks like
 
