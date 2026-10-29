@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mattersplat"
+version = "0.4.0"
+description = "Matterport E57 -> Gaussian splat (Spirula Studio) -> web viewer"
+requires-python = ">=3.10"
+dependencies = ["pye57>=0.4.19", "numpy", "Pillow"]
+
+[project.optional-dependencies]
+score = ["torch", "lpips"]
+
+[project.scripts]
+mattersplat = "mattersplat.__main__:main"
+
+[tool.setuptools]
+packages = ["mattersplat"]

@@ -1,3 +1,5 @@
 pye57>=0.4.19
 numpy
 Pillow
+# optional, for LPIPS in mattersplat.score / tune (CPU build is enough):
+# torch lpips

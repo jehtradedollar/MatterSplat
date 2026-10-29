@@ -30,8 +30,11 @@ DEFAULT_SPIRULA = r"C:\Users\ReddingDrone2\Documents\DJI_Inflight_3DGS\third_par
 TRAIN_FLAGS = {
     "train-resolution-divisor": 2,
     "cap-max": 1_000_000,
-    "depth-supervision-weight": 0.1,  # scan depth is metric and exact; default 0 loads it but ignores it
-    "input-depth-is-ray-depth": 0,  # spirula e57 writes planar z-depth (checked against the raw scan)
+    # Scan depth is loaded but not used for the loss: on whole-sweep holdout, weight 0.1 and 0.5 scored
+    # worse than 0 (LPIPS 0.442 / 0.494 vs 0.415, 2026-10-28). Raise it to experiment.
+    "depth-supervision-weight": 0,
+    "input-depth-is-ray-depth": 0,  # spirula e57 writes planar z-depth (checked against the raw scan); only
+    # matters when depth supervision is on
     "disable-viewer": 1,
     "keep-viewer-alive": 0,
 }
@@ -132,16 +135,82 @@ def import_e57(spirula: str, e57: str, dataset: str, log_dir: str, echo=print) -
         raise RuntimeError(f"spirula e57 failed ({code}), see spirula_e57.log")
 
 
-def train(spirula: str, dataset: str, out: str, iterations: int | None = None, holdout: int = 8,
-          extra: dict | None = None, echo=print) -> dict:
-    """Train 3DGS on a Spirula dataset. holdout N > 0 keeps every Nth image for evaluation and
-    writes rendered vs reference images for them; 0 trains on everything."""
+# Whole sweeps held out for evaluation: spread over the capture order, same list for every run so
+# runs compare. A held-out cube face shares no pixels with its own sweep's other faces, so holding
+# out single faces only tests extrapolation; whole sweeps test "how does a position nobody stood at look".
+DEFAULT_HOLDOUT_SWEEPS = (6, 19, 32, 45, 58, 71, 84, 97)
+
+
+def sweep_of_frames(transforms: dict) -> list[int]:
+    """Sweep index per frame, grouping frames that share a camera centre (in file order)."""
+    ids, out = {}, []
+    for f in transforms["frames"]:
+        key = tuple(np.round(np.array(f["transform_matrix"])[:3, 3], 4))
+        out.append(ids.setdefault(key, len(ids)))
+    return out
+
+
+def holdout_dataset(dataset: str, sweeps) -> tuple[str, list[str]]:
+    """A hardlinked copy of `dataset` whose images are renamed train_*/eval_* so Spirula's
+    --eval-mode filename holds out every face of `sweeps`. Returns (path, eval image names in
+    sorted order; Spirula renders them in a shuffled order, see match_eval_images)."""
+    sweeps = sorted(set(sweeps))
+    dst = f"{dataset}_holdout_{'-'.join(map(str, sweeps))}"
+    tf = json.load(open(os.path.join(dataset, "transforms.json")))
+    sweep_ids = sweep_of_frames(tf)
+    evals = []
+    for f, sid in zip(tf["frames"], sweep_ids):
+        tag = "eval" if sid in sweeps else "train"
+        name = f"images/{tag}_{os.path.basename(f['file_path'])}"
+        links = [(f["file_path"], name)] + [(f[k], f[k]) for k in ("depth_file_path", "normal_file_path") if k in f]
+        for a, b in links:
+            os.makedirs(os.path.dirname(os.path.join(dst, b)), exist_ok=True)
+            if not os.path.exists(os.path.join(dst, b)):
+                os.link(os.path.join(dataset, a), os.path.join(dst, b))
+        f["file_path"] = name
+        if tag == "eval":
+            evals.append(os.path.basename(name))
+    for extra in (tf.get("ply_file_path", "sparse_pc.ply"), "gauge.txt"):
+        if os.path.exists(os.path.join(dataset, extra)):
+            if os.path.exists(os.path.join(dst, extra)):
+                os.remove(os.path.join(dst, extra))  # relink: the source may have been re-cropped
+            os.link(os.path.join(dataset, extra), os.path.join(dst, extra))
+    with open(os.path.join(dst, "transforms.json"), "w") as fh:
+        json.dump(tf, fh, indent=1)
+    return dst, sorted(evals)
+
+
+def match_eval_images(run_dir: str, image_dir: str, candidates: list[str]) -> list[str]:
+    """Name of the dataset image behind each eval-gt-NNNNN.png. Spirula shuffles the eval order
+    per run, so it is matched by content (32 px greyscale thumbnails)."""
+    from PIL import Image
+    thumb = lambda p: np.asarray(Image.open(p).convert("L").resize((32, 32)), dtype=np.float32)
+    ref = {n: thumb(os.path.join(image_dir, n)) for n in candidates}
+    out = []
+    for gt in sorted(glob.glob(os.path.join(run_dir, "eval-gt-*.png"))):
+        t = thumb(gt)
+        out.append(min(ref, key=lambda n: float(np.abs(ref[n] - t).mean())))
+    return out
+
+
+def train(spirula: str, dataset: str, out: str, iterations: int | None = None, holdout: int = 0,
+          holdout_sweeps=None, extra: dict | None = None, echo=print) -> dict:
+    """Train 3DGS on a Spirula dataset.
+
+    holdout_sweeps: hold out every face of these sweeps (preferred evaluation).
+    holdout N > 0: hold out every Nth face instead. Either way rendered vs reference images of the
+    held-out views are written. Neither: train on everything."""
     flags = dict(TRAIN_FLAGS)
     if iterations:
         flags["num-iterations"] = iterations
-    if holdout:
+    eval_names = None
+    if holdout_sweeps:
+        dataset, eval_names = holdout_dataset(dataset, holdout_sweeps)
+        flags.update({"eval-mode": "filename", "save-eval-images": 1})
+    elif holdout:
         flags.update({"eval-mode": "interval", "eval-interval": holdout, "save-eval-images": 1})
     flags.update(extra or {})
+    os.makedirs(out, exist_ok=True)
     run_dir = os.path.join(out, "train")
     cmd = [spirula, "train", "3dgs", "--data", dataset, "--output-dir-prefix", out, "--output-dir-name", "train"]
     for k, v in flags.items():
@@ -162,5 +231,13 @@ def train(spirula: str, dataset: str, out: str, iterations: int | None = None, h
     with open(splat, "rb") as fh:
         head = fh.read(2000).decode(errors="replace")
     n = int(head.split("element vertex")[1].split()[0])
+    if eval_names or holdout:
+        image_dir = os.path.join(dataset, "images")
+        eval_names = match_eval_images(run_dir, image_dir, eval_names or sorted(os.listdir(image_dir)))
+    metrics = {}
+    mpath = os.path.join(run_dir, "metrics.json")
+    if os.path.exists(mpath):
+        metrics = {k: float(np.mean(v)) if isinstance(v, list) else v for k, v in json.load(open(mpath)).items()}
     return {"minutes": minutes, "gpu_peak_mib": gpu.peak, "splats": n, "checkpoint": ckpts[-1],
-            "splat_mb": os.path.getsize(splat) / 1e6, "flags": flags}
+            "splat_mb": os.path.getsize(splat) / 1e6, "flags": flags, "metrics": metrics,
+            "eval_names": eval_names, "run_dir": run_dir}

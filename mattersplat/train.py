@@ -1,12 +1,15 @@
 """Train a Gaussian splat from a Matterport E57 with Spirula Studio.
 
     python -m mattersplat.train <file.e57> --out <dir> [--spirula <spirula.exe>]
-        [--iterations 30000] [--holdout 8] [--no-crop]
+        [--dataset <existing spirula e57 import>] [--iterations 30000]
+        [--holdout-sweeps [N ...] | --holdout N] [--no-crop]
 
 Steps: `spirula e57` import into <out>/dataset (skipped if already there), crop the seed cloud
 to the sweep box, `spirula train 3dgs` with mattersplat.spirula.TRAIN_FLAGS, then copy the result
-to <out>/splat.ply. With --holdout N (default 8) every Nth face is held out and its rendered vs
-reference images land in <out>/renders/; --holdout 0 trains on every face.
+to <out>/splat.ply. By default every face trains. --holdout-sweeps holds out all 6 faces of the
+given sweeps (no values: mattersplat.spirula.DEFAULT_HOLDOUT_SWEEPS) and --holdout N every Nth
+face; the held-out rendered vs reference images land in <out>/renders/ and the scores in
+train_summary.json.
 spirula.exe is found from --spirula, the MATTERSPLAT_SPIRULA env var, or the default install path.
 """
 
@@ -56,13 +59,17 @@ def main(argv=None):
     ap.add_argument("--out", required=True)
     ap.add_argument("--spirula", help="path to spirula.exe")
     ap.add_argument("--iterations", type=int, help="training steps (Spirula default 30000)")
-    ap.add_argument("--holdout", type=int, default=8, help="hold out every Nth face for evaluation; 0 = none")
+    ap.add_argument("--dataset", help="reuse this spirula e57 import instead of importing into <out>/dataset")
+    g = ap.add_mutually_exclusive_group()
+    g.add_argument("--holdout-sweeps", type=int, nargs="*", help="hold out every face of these sweeps "
+                   "(no values: the default 8 sweeps)")
+    g.add_argument("--holdout", type=int, default=0, help="hold out every Nth face instead")
     ap.add_argument("--no-crop", action="store_true", help="keep the seed cloud's long-range points")
     args = ap.parse_args(argv)
 
     exe = spirula.find_spirula(args.spirula)
     os.makedirs(args.out, exist_ok=True)
-    dataset = os.path.join(args.out, "dataset")
+    dataset = args.dataset or os.path.join(args.out, "dataset")
     t0 = time.time()
     spirula.import_e57(exe, args.e57, dataset, args.out)
     summary = {"spirula": exe, "import_minutes": (time.time() - t0) / 60}
@@ -71,10 +78,14 @@ def main(argv=None):
         print(f"Seed cloud cropped to {np.round(box, 2).tolist()}: kept {kept:,}, dropped {dropped:,}")
         summary.update(seed_kept=kept, seed_dropped=dropped, crop_box=box.tolist())
 
-    res = spirula.train(exe, dataset, args.out, args.iterations, args.holdout)
+    sweeps = None
+    if args.holdout_sweeps is not None:
+        sweeps = args.holdout_sweeps or list(spirula.DEFAULT_HOLDOUT_SWEEPS)
+    res = spirula.train(exe, dataset, args.out, args.iterations, args.holdout, sweeps)
     summary.update(res)
-    summary["metrics"] = eval_metrics(os.path.join(args.out, "spirula_train.log"))
-    if args.holdout:
+    if not summary["metrics"]:
+        summary["metrics"] = eval_metrics(os.path.join(args.out, "spirula_train.log"))
+    if args.holdout or sweeps:
         summary["renders"] = len(collect_eval(os.path.join(args.out, "train"), os.path.join(args.out, "renders")))
     with open(os.path.join(args.out, "train_summary.json"), "w") as fh:
         json.dump(summary, fh, indent=1)
